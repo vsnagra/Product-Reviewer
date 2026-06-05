@@ -1,0 +1,621 @@
+﻿diff --git a/src/components/tabs/PagesTab.tsx b/src/components/tabs/PagesTab.tsx.botched
+index f97b2ed..eb43d1e 100644
+--- a/src/components/tabs/PagesTab.tsx
++++ b/src/components/tabs/PagesTab.tsx.botched
+@@ -3,6 +3,7 @@ import { useAppStore, Page } from '../../store';
+ import { generateImage, generateJson, generateText } from '../../services/gemini';
+ import { fetchVoices, generateVoiceAudio, playMockAudio, stopAudio, getAudioDuration, Voice } from '../../services/inworld';
+ import { createVideo } from '../../services/video';
++import { AssetManager } from '../../services/AssetManager';
+ import { v4 as uuidv4 } from 'uuid';
+ import { Play, Square, RefreshCw, Upload, Undo2, Redo2, X, Trash2, Edit3 } from 'lucide-react';
+ 
+@@ -187,7 +188,8 @@ export function PagesTab() {
+           const textPayload = silenceBuffer > 0 
+             ? `<speak><prosody volume="silent">.</prosody><break time="${silenceBuffer}s" /> ${targetText} <break time="${silenceBuffer}s" /></speak>` 
+             : targetText;
+-          const audioUrl = await generateVoiceAudio(textPayload, selectedVoiceId, globalSettings);
++          const generatedAudioUrl = await generateVoiceAudio(textPayload, selectedVoiceId, globalSettings);
++          const audioUrl = await AssetManager.saveMedia(generatedAudioUrl, 'mp3');
+           const audioDuration = await getAudioDuration(audioUrl);
+           updatePage(page.id, { audioUrl, audioDuration });
+           addTraceLog(`[PagesTab] Successfully generated voice for Page ${page.pageNumber}. Duration: ${audioDuration.toFixed(2)}s`);
+@@ -218,7 +220,8 @@ export function PagesTab() {
+       const textPayload = silenceBuffer > 0 
+         ? `<speak><prosody volume="silent">.</prosody><break time="${silenceBuffer}s" /> ${targetText} <break time="${silenceBuffer}s" /></speak>` 
+         : targetText;
+-      const audioUrl = await generateVoiceAudio(textPayload, selectedVoiceId, globalSettings);
++      const generatedAudioUrl = await generateVoiceAudio(textPayload, selectedVoiceId, globalSettings);
++          const audioUrl = await AssetManager.saveMedia(generatedAudioUrl, 'mp3');
+       const audioDuration = await getAudioDuration(audioUrl);
+       updatePage(page.id, { audioUrl, audioDuration });
+       setStatus(true, 100, "Voice regenerated.");
+@@ -565,7 +568,8 @@ export function PagesTab() {
+         setStatus(true, 10 + ((i / chapterPages.length) * 90), `Generating media for Page ${i + 1} of ${chapterPages.length}...`);
+ 
+         try {
+-          const newImageUrl = await generateImage(buildFinalImagePrompt(page), getReferenceImages(page));
++          const generatedImageUrl = await generateImage(buildFinalImagePrompt(page), getReferenceImages(page));
++          const newImageUrl = await AssetManager.saveMedia(generatedImageUrl);
+           const history = page.historyPageImage || [];
+           if (page.imageUrl) {
+             history.push(page.imageUrl);
+@@ -655,8 +659,9 @@ export function PagesTab() {
+ 
+           try {
+              const inputImages = [page.imageUrl];
+-             if (charRefImage) inputImages.push(charRefImage);
+-             const newImg = await generateImage(localPrompt, inputImages);
++             if (charRefImage) inputImages.push(charRefImage); else inputImages.push(...getReferenceImages(page));
++             const generatedImg = await generateImage(localPrompt, inputImages);
++             const newImg = await AssetManager.saveMedia(generatedImg);
+              
+              const history = (page as any)[target.historyKey] || [];
+              const currentImg = (page as any)[target.key] || pageUpdates[target.key];
+@@ -730,7 +735,8 @@ export function PagesTab() {
+   const handleRegenerateImageOnly = async (page: Page) => {
+     setStatus(true, 50, `Regenerating image for Page ${page.pageNumber}...`);
+     try {
+-      const newImageUrl = await generateImage(buildFinalImagePrompt(page), getReferenceImages(page));
++      const generatedImageUrl = await generateImage(buildFinalImagePrompt(page), getReferenceImages(page));
++          const newImageUrl = await AssetManager.saveMedia(generatedImageUrl);
+       updatePage(page.id, { 
+         previousImageUrl: page.imageUrl || undefined,
+         imageUrl: newImageUrl,
+@@ -776,7 +782,94 @@ export function PagesTab() {
+         ? useAppStore.getState().cameraAngle1Prompt 
+         : useAppStore.getState().cameraAngle2Prompt;
+         
+-      const newImageUrl = await generateImage(anglePrompt, [page.imageUrl]);
++      const generatedImageUrl = await generateImage(anglePrompt, [page.imageUrl, ...getReferenceImages(page)]);
++      const newImageUrl = await AssetManager.saveMedia(generatedImageUrl);
++      if (angle === 1) {
++        updatePage(page.id, { 
++          previousImageUrlAngle1: page.imageUrlAngle1 || undefined,
++          imageUrlAngle1: newImageUrl,
++          nextImageUrlAngle1: undefined
++        });
++      } else {
++        updatePage(page.id, { 
++          previousImageUrlAngle2: page.imageUrlAngle2 || undefined,
++          imageUrlAngle2: newImageUrl,
++          nextImageUrlAngle2: undefined
++        });
++      }
++      setStatus(true, 100, `Camera Angle ${angle} generated.`);
++    } catch (error) {
++      console.error(error);
++      setStatus(true, 0, `Error generating Camera Angle ${angle}.`);
++    } finally {
++      setTimeout(() => setStatus(false, 0, ""), 2000);
++    }
++  };
++
++  const handleRevertAngle = (page: Page, angle: 1 | 2) => {
++    if (angle === 1 && page.previousImageUrlAngle1) {
++      updatePage(page.id, {
++        imageUrlAngle1: page.previousImageUrlAngle1,
++        previousImageUrlAngle1: undefined,
++        nextImageUrlAngle1: page.imageUrlAngle1
++      });
++    } else if (angle === 2 && page.previousImageUrlAngle2) {
++      updatePage(page.id, {
++        imageUrlAngle2: page.previousImageUrlAngle2,
++        previousImageUrlAngle2: undefined,
++        nextImageUrlAngle2: page.imageUrlAngle2
++      });
++    }
++  };
++
++  const handleNextAngle = (page: Page, angle: 1 | 2) => {
++    if (angle === 1 && page.nextImageUrlAngle1) {
++      updatePage(page.id, {
++        imageUrlAngle1: page.nextImageUrlAngle1,
++        previousImageUrlAngle1: page.imageUrlAngle1,
++        nextImageUrlAngle1: undefined
++      });
++    } else if (angle === 2 && page.nextImageUrlAngle2) {
++      updatePage(page.id, {
++        imageUrlAngle2: page.nextImageUrlAngle2,
++        previousImageUrlAngle2: page.imageUrlAngle2,
++        nextImageUrlAngle2: undefined
++      });
++    }
++  };
++
++  const handleUnloadAngle = (page: Page, angle: 1 | 2) => {
++    if (angle === 1) {
++      updatePage(page.id, {
++        imageUrlAngle1: undefined,
++        previousImageUrlAngle1: undefined,
++        nextImageUrlAngle1: undefined
++      });
++    } else {
++      updatePage(page.id, {
++        imageUrlAngle2: undefined,
++        previousImageUrlAngle2: undefined,
++        nextImageUrlAngle2: undefined
++      });
++    }
++  };
++
++  const handleBookBackUpload = (e: React.ChangeEvent<HTMLInputElement>, pageId: string) => {
++    const file = e.target.files?.[0];
++    const page = pages.find(p => p.id === pageId);
++    if (file && page) {
++      const reader = new FileReader();
++      reader.onload = (event) => {
++        if (event.target?.result) {
++          const resultUrl = event.target.result as string;
++          useAppStore.getState().setGlobalSettings({ defaultBookBackImageUrl: resultUrl });
++          if (copyBookBackToAll) {
++            chapterPages.forEach(p => updatePage(p.id, { bookBackImageUrl: resultUrl }));
++          } else {
++            updatePage(pageId, { bookBackImageUrl: resultUrl });
++          }
++        }
++      const newImageUrl = await AssetManager.saveMedia(generatedImageUrl);
+       if (angle === 1) {
+         updatePage(page.id, { 
+           previousImageUrlAngle1: page.imageUrlAngle1 || undefined,
+@@ -892,6 +985,27 @@ export function PagesTab() {
+     }
+   };
+ 
++  const handlePageVideoUpload = (e: React.ChangeEvent<HTMLInputElement>, pageId: string) => {
++    const file = e.target.files?.[0];
++    if (file) {
++      const url = URL.createObjectURL(file);
++      updatePage(pageId, { pageVideoUrl: url });
++    }
++  };
++
++  const handlePageVideoOverlayUpload = (e: React.ChangeEvent<HTMLInputElement>, pageId: string) => {
++    const file = e.target.files?.[0];
++    if (file) {
++      const reader = new FileReader();
++      reader.onload = (event) => {
++        if (event.target?.result) {
++          updatePage(pageId, { pageVideoOverlayUrl: event.target.result as string });
++        }
++      };
++      reader.readAsDataURL(file);
++    }
++  };
++
+ 
+   const handleIdentifySoundEffect = (page: Page) => {
+     const bestMatch = identifySoundEffectForPage(page.text || '', page.imagePrompt || '');
+@@ -1242,7 +1356,8 @@ export function PagesTab() {
+ 
+     setStatus(true, 50, `Refining image...`);
+     try {
+-      const newImgUrl = await generateImage(refinePrompt, [refinePopup.currentImageUrl]);
++      const generatedImgUrl = await generateImage(refinePrompt, [refinePopup.currentImageUrl, ...getReferenceImages(page)]);
++      const newImgUrl = await AssetManager.saveMedia(generatedImgUrl);
+       
+       const historyKey = `history${refinePopup.imageKey === 'imageUrl' ? 'PageImage' : refinePopup.imageKey.replace('imageUrl', '')}` as keyof Page;
+       const history = (page[historyKey] as string[]) || [];
+@@ -1329,7 +1444,7 @@ export function PagesTab() {
+       if (charId) {
+         const char = characters.find(c => c.id === charId);
+         if (char && char.imageUrl) inputImages.push(char.imageUrl);
+-      } else if (imageKey === 'imageUrl') {
++      } else {
+         const refImages = getReferenceImages(page);
+         inputImages.push(...refImages);
+       }
+@@ -1342,7 +1457,8 @@ export function PagesTab() {
+       setStatus(true, 50, `Regenerating ${title}...`);
+       try {
+         const finalPromptToUse = imageKey === 'imageUrl' ? buildFinalImagePrompt(page) : (localPrompt || '');
+-        const newImg = await generateImage(finalPromptToUse, inputImages);
++        const generatedImg = await generateImage(finalPromptToUse, inputImages);
++        const newImg = await AssetManager.saveMedia(generatedImg);
+         const newHistory = [...history];
+         if (imageUrl) {
+           newHistory.push(imageUrl);
+@@ -1723,393 +1839,19 @@ export function PagesTab() {
+                         <div className="flex items-center gap-2 mr-2">
+                           <label className="text-app-small text-gray-600 uppercase tracking-wider">Duration (s)</label>
+                           <input
+-                            type="text"
+-                            readOnly
+-                            value={selectedPage.audioDuration ? selectedPage.audioDuration.toFixed(2) : '0.00'}
+-                            className="w-16 px-2 py-1.5 bg-gray-100 border border-gray-300 rounded text-gray-900 text-app-body h-[42px] text-center"
++                            type="number"
++                            step="0.1"
++                            value={selectedPage.audioDuration || 0}
++                            onChange={(e) => updatePage(selectedPage.id, { audioDuration: parseFloat(e.target.value) || 0 })}
++                            className="w-20 px-2 py-1.5 bg-white border border-gray-300 rounded text-gray-900 text-app-body h-[42px] text-center"
+                           />
+                         </div>
+-                        <button
+-                          onClick={() => handleGenerateVoice(selectedPage)}
+-                          className="flex items-center gap-2 px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded text-app-body transition-colors h-[42px]"
+-                        >
+-                          <RefreshCw size={16} /> Generate Voice
+-                        </button>
+-                        <button
+-                          onClick={() => playMockAudio(selectedPage.audioUrl)}
+-                          className="flex items-center gap-2 px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white rounded text-app-body transition-colors h-[42px]"
+-                        >
+-                          <Play size={16} /> Play Voice
+-                        </button>
+-                        <button
+-                          onClick={() => stopAudio()}
+-                          className="flex items-center gap-2 px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded text-app-body transition-colors h-[42px]"
+-                        >
+-                          <Square size={16} /> Stop Voice
+-                        </button>
+-                      </div>
+-                    </div>
+-
+-                    <div className="flex-grow flex flex-col gap-2">
+-                      <div className="flex justify-between items-center">
+-                        <label className="text-app-small text-gray-600 uppercase tracking-wider">Page Text (Editable)</label>
+-                        <span className="text-app-small bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full font-medium">{getWordCount(selectedPage.text)} words</span>
+-                      </div>
+-                      <textarea
+-                        value={selectedPage.text}
+-                        onChange={(e) => updatePage(selectedPage.id, { text: e.target.value, voicePrompt: e.target.value })}
+-                        className="w-full min-h-[150px] p-4 bg-white border border-gray-200 rounded-lg shadow-inner text-app-label text-gray-800 leading-relaxed font-app resize-none focus:outline-none focus:border-blue-500"
+-                      />
+-                    </div>
+-
+-                    <div className="flex-grow flex flex-col gap-2">
+-                      <div className="flex justify-between items-center">
+-                        <label className="text-app-small text-gray-600 uppercase tracking-wider">Page Text (Optimized)</label>
+-                        <span className="text-app-small bg-green-100 text-green-800 px-2 py-0.5 rounded-full font-medium">{getWordCount(selectedPage.optimizedText)} words</span>
+-                      </div>
+-                      <textarea
+-                        value={selectedPage.optimizedText || ''}
+-                        onChange={(e) => updatePage(selectedPage.id, { optimizedText: e.target.value })}
+-                        className="w-full min-h-[150px] p-4 bg-gray-100 border border-gray-300 rounded-lg shadow-inner text-app-label text-green-800 leading-relaxed font-app resize-none focus:outline-none focus:border-green-500"
+-                      />
+-                      <div className="flex items-center gap-2 mt-1">
+-                        <button
+-                          onClick={() => handleOptimizeText(selectedPage)}
+-                          className="flex items-center justify-center gap-2 px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white rounded font-medium transition-colors"
+-                        >
+-                          <RefreshCw size={16} /> Optimize Text
+-                        </button>
+-                      </div>
+-                    </div>
+-
+-
+-
+-                    <div className="flex flex-col gap-2 mt-2">
+-                      <label className="text-app-small text-gray-600 uppercase tracking-wider">Characters in Scene (Reference)</label>
+-                      <div className="flex flex-wrap gap-2">
+-                        {characters.map(char => {
+-                          const isSelected = selectedPage.characterIds?.includes(char.id);
+-                          return (
+-                            <div
+-                              key={char.id}
+-                              onClick={() => {
+-                                const currentIds = selectedPage.characterIds || [];
+-                                const newIds = isSelected
+-                                  ? currentIds.filter(id => id !== char.id)
+-                                  : [...currentIds, char.id];
+-                                updatePage(selectedPage.id, { characterIds: newIds });
+-                              }}
+-                              className={`flex items-center gap-2 p-1.5 pr-3 rounded-full cursor-pointer border transition-colors ${isSelected ? 'bg-blue-900/50 border-blue-500' : 'bg-gray-100 border-gray-300 hover:bg-gray-200'}`}
+-                            >
+-                              <div className="w-6 h-6 rounded-full overflow-hidden bg-gray-200 shrink-0">
+-                                {char.imageUrl ? <img src={char.imageUrl} alt={char.name} className="w-full h-full object-cover" /> : null}
+-                              </div>
+-                              <span className={`text-app-small ${isSelected ? 'text-blue-800' : 'text-gray-700'}`}>{char.name}</span>
+-                            </div>
+-                          );
+-                        })}
+-                        {characters.length === 0 && (
+-                          <span className="text-app-body text-gray-500 italic">No characters generated yet.</span>
+-                        )}
+-                      </div>
+-                    </div>
+-                      {/* Sound Effect Controls */}
+-                      <div className="flex flex-col gap-2 mt-2 pt-4 border-t border-gray-200">
+-                        <label className="text-app-small text-gray-600 uppercase tracking-wider">Sound Effect</label>
+-                        <div className="flex items-center gap-2">
+-                          <select
+-                            value={selectedPage.soundEffectId || 'none'}
+-                            onChange={(e) => updatePage(selectedPage.id, { soundEffectId: e.target.value })}
+-                            className="flex-grow px-2 py-1.5 bg-gray-100 border border-gray-300 rounded text-gray-900 text-app-body"
+-                          >
+-                            <option value="none">None</option>
+-                            {SOUND_EFFECTS.map(sfx => (
+-                              <option key={sfx.id} value={sfx.id}>{sfx.name}</option>
+-                            ))}
+-                            <option value="custom">Custom...</option>
+-                          </select>
+-                          <button
+-                            onClick={() => handlePlaySoundEffect(selectedPage)}
+-                            className="flex items-center justify-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white rounded text-app-body transition-colors shrink-0"
+-                            title="Play selected sound effect"
+-                          >
+-                            <Play size={14} /> Play
+-                          </button>
+-                          <button
+-                            onClick={() => stopAudio()}
+-                            className="flex items-center justify-center gap-1 px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded text-app-body transition-colors shrink-0"
+-                            title="Stop playback"
+-                          >
+-                            <Square size={14} />
+-                          </button>
+-                        </div>
+-                        {selectedPage.soundEffectId === 'custom' && (
+-                          <div className="flex items-center gap-2 mt-1">
+-                            <label className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded text-app-label text-gray-900 transition-colors cursor-pointer w-full justify-center">
+-                              <Upload size={14} /> Upload Custom Sound
+-                              <input
+-                                type="file"
+-                                accept="audio/*"
+-                                className="hidden"
+-                                onChange={(e) => handleCustomSoundEffectUpload(e, selectedPage.id)}
+-                              />
+-                            </label>
+-                          </div>
+-                        )}
+-                        <button
+-                          onClick={() => handleIdentifySoundEffect(selectedPage)}
+-                          className="flex items-center justify-center gap-2 w-full py-2 bg-yellow-600 hover:bg-yellow-500 border border-yellow-500 text-white rounded text-app-body transition-colors mt-1"
+-                        >
+-                          Identify Sound Effect
+-                        </button>
+-                      </div>
+-
+-                    </div>
+-                  {/* Column 2: Image Grid (75%) */}
+-                  <div className="md:col-span-3">
+-                    <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+-                      {renderImageCell(selectedPage, 'Page Image', 'imageUrl', 'imagePrompt', 'historyPageImage')}
+-                      {renderImageCell(selectedPage, 'Camera Angle 1', 'imageUrlAngle1', 'cameraAngle1Prompt', 'historyAngle1')}
+-                      {renderImageCell(selectedPage, 'Camera Angle 2', 'imageUrlAngle2', 'cameraAngle2Prompt', 'historyAngle2')}
+-                      {renderImageCell(selectedPage, 'Camera Angle 3', 'imageUrlAngle3', 'angle3Prompt', 'historyAngle3')}
+-                      {renderImageCell(selectedPage, 'Close Up 1', 'imageUrlCloseUp1', 'closeUp1Prompt', 'historyCloseUp1', 1)}
+-                      {renderImageCell(selectedPage, 'Close Up 2', 'imageUrlCloseUp2', 'closeUp2Prompt', 'historyCloseUp2', 2)}
+-                    </div>
+-                  </div>
+-                </div>
+-
+-                  {/* Removed Column 3 */}
+-
+-                {/* New Section: Book Back and Final Image */}
+-                <div className="flex flex-col gap-4 border-t border-gray-200 pt-6 mt-4 shrink-0">
+-                  <h3 className="text-app-heading font-bold text-gray-900">Final Page Generation</h3>
+-
+-                  {/* Layout Settings Grid */}
+-                  <div className="grid grid-cols-3 md:grid-cols-5 gap-4 bg-white p-4 rounded-lg border border-gray-200">
+-                    <div className="flex flex-col gap-1">
+-                      <label className="text-app-small text-gray-600">Image Offset X</label>
+-                      <input type="number" value={selectedPage.imageOffsetX ?? globalSettings.defaultImageOffsetX ?? 306} onChange={(e) => { const v = Number(e.target.value); updatePage(selectedPage.id, { imageOffsetX: v }); useAppStore.getState().setGlobalSettings({ defaultImageOffsetX: v }); }} className="px-2 py-1 bg-gray-100 border border-gray-300 rounded text-gray-900 text-app-body" />
+-                    </div>
+-                    <div className="flex flex-col gap-1">
+-                      <label className="text-app-small text-gray-600">Image Offset Y</label>
+-                      <input type="number" value={selectedPage.imageOffsetY ?? globalSettings.defaultImageOffsetY ?? 210} onChange={(e) => { const v = Number(e.target.value); updatePage(selectedPage.id, { imageOffsetY: v }); useAppStore.getState().setGlobalSettings({ defaultImageOffsetY: v }); }} className="px-2 py-1 bg-gray-100 border border-gray-300 rounded text-gray-900 text-app-body" />
+-                    </div>
+-                    <div className="flex flex-col gap-1">
+-                      <label className="text-app-small text-gray-600">Image Clip X1</label>
+-                      <input type="number" value={selectedPage.imageClipX1 ?? globalSettings.defaultImageClipX1 ?? 112} onChange={(e) => { const v = Number(e.target.value); updatePage(selectedPage.id, { imageClipX1: v }); useAppStore.getState().setGlobalSettings({ defaultImageClipX1: v }); }} className="px-2 py-1 bg-gray-100 border border-gray-300 rounded text-gray-900 text-app-body" />
+-                    </div>
+-                    <div className="flex flex-col gap-1">
+-                      <label className="text-app-small text-gray-600">Image Clip X2</label>
+-                      <input type="number" value={selectedPage.imageClipX2 ?? globalSettings.defaultImageClipX2 ?? 112} onChange={(e) => { const v = Number(e.target.value); updatePage(selectedPage.id, { imageClipX2: v }); useAppStore.getState().setGlobalSettings({ defaultImageClipX2: v }); }} className="px-2 py-1 bg-gray-100 border border-gray-300 rounded text-gray-900 text-app-body" />
+-                    </div>
+-                    <div className="flex flex-col gap-1">
+-                      <label className="text-app-small text-gray-600">Image Scale</label>
+-                      <input type="number" step="0.1" value={selectedPage.imageScale ?? globalSettings.defaultImageScale ?? 0.97} onChange={(e) => { const v = Number(e.target.value); updatePage(selectedPage.id, { imageScale: v }); useAppStore.getState().setGlobalSettings({ defaultImageScale: v }); }} className="px-2 py-1 bg-gray-100 border border-gray-300 rounded text-gray-900 text-app-body" />
+-                    </div>
+-                    <div className="flex flex-col gap-1">
+-                      <label className="text-app-small text-gray-600">Text Offset X</label>
+-                      <input type="number" value={selectedPage.textOffsetX ?? globalSettings.defaultTextOffsetX ?? 1500} onChange={(e) => { const v = Number(e.target.value); updatePage(selectedPage.id, { textOffsetX: v }); useAppStore.getState().setGlobalSettings({ defaultTextOffsetX: v }); }} className="px-2 py-1 bg-gray-100 border border-gray-300 rounded text-gray-900 text-app-body" />
+-                    </div>
+-                    <div className="flex flex-col gap-1">
+-                      <label className="text-app-small text-gray-600">Text Offset Y</label>
+-                      <input type="number" value={selectedPage.textOffsetY ?? globalSettings.defaultTextOffsetY ?? 400} onChange={(e) => { const v = Number(e.target.value); updatePage(selectedPage.id, { textOffsetY: v }); useAppStore.getState().setGlobalSettings({ defaultTextOffsetY: v }); }} className="px-2 py-1 bg-gray-100 border border-gray-300 rounded text-gray-900 text-app-body" />
+-                    </div>
+-                    <div className="flex flex-col gap-1">
+-                      <label className="text-app-small text-gray-600">Text Width</label>
+-                      <input type="number" value={selectedPage.textWidth ?? globalSettings.defaultTextWidth ?? 700} onChange={(e) => { const v = Number(e.target.value); updatePage(selectedPage.id, { textWidth: v }); useAppStore.getState().setGlobalSettings({ defaultTextWidth: v }); }} className="px-2 py-1 bg-gray-100 border border-gray-300 rounded text-gray-900 text-app-body" />
+-                    </div>
+-                    <div className="flex flex-col gap-1">
+-                      <label className="text-app-small text-gray-600">Text Height</label>
+-                      <input type="number" value={selectedPage.textHeight ?? globalSettings.defaultTextHeight ?? 300} onChange={(e) => { const v = Number(e.target.value); updatePage(selectedPage.id, { textHeight: v }); useAppStore.getState().setGlobalSettings({ defaultTextHeight: v }); }} className="px-2 py-1 bg-gray-100 border border-gray-300 rounded text-gray-900 text-app-body" />
+-                    </div>
+-                    <div className="flex flex-col gap-1">
+-                      <label className="text-app-small text-gray-600">Font Size</label>
+-                      <input type="number" value={selectedPage.fontSize ?? globalSettings.defaultFontSize ?? 45} onChange={(e) => { const v = Number(e.target.value); updatePage(selectedPage.id, { fontSize: v }); useAppStore.getState().setGlobalSettings({ defaultFontSize: v }); }} className="px-2 py-1 bg-gray-100 border border-gray-300 rounded text-gray-900 text-app-body" />
+-                    </div>
+-                    <div className="flex flex-col gap-1">
+-                      <label className="text-app-small text-gray-600">Font</label>
+-                      <select
+-                        value={selectedPage.fontFamily || globalSettings.defaultFontFamily || 'Times New Roman'}
+-                        onChange={(e) => { const v = e.target.value; updatePage(selectedPage.id, { fontFamily: v }); useAppStore.getState().setGlobalSettings({ defaultFontFamily: v }); }}
+-                        className="px-2 py-1 bg-gray-100 border border-gray-300 rounded text-gray-900 text-app-body"
+-                      >
+-                        <option value="Times New Roman">Times New Roman</option>
+-                        <option value="Arial">Arial</option>
+-                        <option value="Courier New">Courier New</option>
+-                        <option value="Georgia">Georgia</option>
+-                        <option value="Verdana">Verdana</option>
+-                        <option value="Comic Sans MS">Comic Sans MS</option>
+-                      </select>
+-                    </div>
+-                  </div>
+-
+-                  {selectedPage.pageNumber === 1 && (
+-                    <div className="flex justify-end mt-2">
+-                      <button
+-                        onClick={() => handleCopyLayoutToAllPages(selectedPage)}
+-                        className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded text-app-body transition-colors"
+-                      >
+-                        Copy Layout to All Pages
+-                      </button>
+-                    </div>
+-                  )}
+-
+-                  <div className="flex gap-8 w-full mt-4">
+-                    {/* Book Back Upload */}
+-                    <div className="w-1/2 flex flex-col gap-2">
+-                      <div className="flex justify-between items-center">
+-                        <label className="text-app-small text-gray-600 uppercase tracking-wider">Book Back (16:9)</label>
+-                        <label className="flex items-center gap-1 text-app-small text-gray-600 cursor-pointer">
+-                          <input
+-                            type="checkbox"
+-                            checked={copyBookBackToAll}
+-                            onChange={(e) => setCopyBookBackToAll(e.target.checked)}
+-                            className="w-3 h-3"
+-                          />
+-                          Copy to All Pages
+-                        </label>
+-                      </div>
+-                      <div className="aspect-video bg-gray-100 rounded-lg overflow-hidden border border-gray-300 flex flex-col items-center justify-center relative">
+-                        {(selectedPage.bookBackImageUrl || globalSettings.defaultBookBackImageUrl) ? (
+-                          <>
+-                            <img src={selectedPage.bookBackImageUrl || globalSettings.defaultBookBackImageUrl} alt="Book Back" className="w-full h-full object-cover" />
+-                            <button
+-                              onClick={() => { updatePage(selectedPage.id, { bookBackImageUrl: undefined }); useAppStore.getState().setGlobalSettings({ defaultBookBackImageUrl: undefined }); }}
+-                              className="absolute top-2 right-2 bg-red-600 text-white p-1 rounded hover:bg-red-500"
+-                            >
+-                              <Square size={16} />
+-                            </button>
+-                          </>
+-                        ) : (
+-                          <div className="text-center p-4">
+-                            <Upload className="mx-auto mb-2 text-gray-500" size={24} />
+-                            <span className="text-app-body text-gray-600">Upload Book Back Image</span>
+-                            <input
+-                              type="file"
+-                              accept="image/*"
+-                              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+-                              onChange={(e) => handleBookBackUpload(e, selectedPage.id)}
+-                            />
+-                          </div>
+-                        )}
+-                      </div>
+-                    </div>
+-
+-                    {/* PNG Overlay Upload */}
+-                    <div className="w-1/2 flex flex-col gap-2">
+-                      <div className="flex justify-between items-center">
+-                        <label className="text-app-small text-gray-600 uppercase tracking-wider">PNG Overlay</label>
+-                        <div className="flex items-center gap-3">
+-                          <div className="flex items-center gap-1">
+-                            <label className="text-app-small text-gray-600">Skip Pages:</label>
+-                            <input
+-                              type="number"
+-                              min="0"
+-                              value={pngOverlaySkipPages}
+-                              onChange={(e) => setPngOverlaySkipPages(Math.max(0, parseInt(e.target.value) || 0))}
+-                              className="w-12 px-1 py-0.5 bg-gray-100 border border-gray-300 rounded text-gray-900 text-xs text-center"
+-                            />
+-                          </div>
+-                          <label className="flex items-center gap-1 text-app-small text-gray-600 cursor-pointer">
+-                            <input
+-                              type="checkbox"
+-                              checked={copyPngOverlayToAll}
+-                              onChange={(e) => setCopyPngOverlayToAll(e.target.checked)}
+-                              className="w-3 h-3"
+-                            />
+-                            Copy to All Pages
+-                          </label>
+-                        </div>
+-                      </div>
+-                      <div className="aspect-video bg-gray-100 rounded-lg overflow-hidden border border-gray-300 flex flex-col items-center justify-center relative">
+-                        {(selectedPage.pngOverlayUrl || globalSettings.defaultPngOverlayUrl) ? (
+-                          <>
+-                            <img src={selectedPage.pngOverlayUrl || globalSettings.defaultPngOverlayUrl} alt="PNG Overlay" className="w-full h-full object-cover" />
+-                            <button
+-                              onClick={() => { updatePage(selectedPage.id, { pngOverlayUrl: undefined }); useAppStore.getState().setGlobalSettings({ defaultPngOverlayUrl: undefined }); }}
+-                              className="absolute top-2 right-2 bg-red-600 text-white p-1 rounded hover:bg-red-500"
+-                            >
+-                              <Square size={16} />
+-                            </button>
+-                          </>
+-                        ) : (
+-                          <div className="text-center p-4">
+-                            <Upload className="mx-auto mb-2 text-gray-500" size={24} />
+-                            <span className="text-app-body text-gray-600">Upload PNG Overlay</span>
+-                            <input
+-                              type="file"
+-                              accept="image/png"
+-                              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+-                              onChange={(e) => handlePngOverlayUpload(e, selectedPage.id)}
+-                            />
+-                          </div>
+-                        )}
+-                      </div>
+-                    </div>
+-                  </div>
+-                  <div className="flex flex-col gap-4 w-full mt-4 border-t border-gray-200 pt-4">
+-                    <button
+-                      onClick={() => handleGenerateFinalImage(selectedPage)}
+-                      disabled={!(selectedPage.bookBackImageUrl || globalSettings.defaultBookBackImageUrl)}
+-                      className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-200 disabled:text-gray-500 text-white rounded font-medium transition-colors"
+-                    >
+-                      Generate Final Images
+-                    </button>
+-                    
+-                    <div className="grid grid-cols-2 xl:grid-cols-4 gap-6 w-full">
+-                      {/* Final Page Image */}
+-                      <div className="flex flex-col gap-2">
+-                        <label className="text-app-small text-gray-600 uppercase tracking-wider font-bold text-center">File Page Image</label>
+-                        <div className="aspect-video bg-gray-100 rounded-lg overflow-hidden border border-gray-300 flex items-center justify-center cursor-pointer hover:border-gray-400 transition-colors" onClick={() => selectedPage.finalPageImageUrl && setPreviewImageUrl(selectedPage.finalPageImageUrl)}>
+-                          {selectedPage.finalPageImageUrl ? (
+-                            <img src={selectedPage.finalPageImageUrl} alt="Final Page" className="w-full h-full object-contain" />
+-                          ) : (
+-                            <span className="text-gray-500 text-sm">No final image</span>
+-                          )}
+-                        </div>
+-                      </div>
+-                      
+-                      {/* Final Page Image 1 */}
+-                      <div className="flex flex-col gap-2">
+-                        <label className="text-app-small text-gray-600 uppercase tracking-wider font-bold text-center">File Page Image 1</label>
+-                        <div className="aspect-video bg-gray-100 rounded-lg overflow-hidden border border-gray-300 flex items-center justify-center cursor-pointer hover:border-gray-400 transition-colors" onClick={() => selectedPage.finalPageImageUrlAngle1 && setPreviewImageUrl(selectedPage.finalPageImageUrlAngle1)}>
+-                          {selectedPage.finalPageImageUrlAngle1 ? (
+-                            <img src={selectedPage.finalPageImageUrlAngle1} alt="Final Page 1" className="w-full h-full object-contain" />
+-                          ) : (
+-                            <span className="text-gray-500 text-sm">No final image 1</span>
+-                          )}
+-                        </div>
+-                      </div>
+-
+-                      {/* Final Page Image 2 */}
+-                      <div className="flex flex-col gap-2">
+-                        <label className="text-app-small text-gray-600 uppercase tracking-wider font-bold text-center">File Page Image 2</label>
+-                        <div className="aspect-video bg-gray-100 rounded-lg overflow-hidden border border-gray-300 flex items-center justify-center cursor-pointer hover:border-gray-400 transition-colors" onClick={() => selectedPage.finalPageImageUrlAngle2 && setPreviewImageUrl(selectedPage.finalPageImageUrlAngle2)}>
+-                          {selectedPage.finalPageImageUrlAngle2 ? (
+-                            <img src={selectedPage.finalPageImageUrlAngle2} alt="Final Page 2" className="w-full h-full object-contain" />
+-                          ) : (
+-                            <span className="text-gray-500 text-sm">No final image 2</span>
+-                          )}
+-                        </div>
+-                      </div>
+-
+-                      {/* Final Page Image 3 */}
+-                      <div className="flex flex-col gap-2">
+-                        <label className="text-app-small text-gray-600 uppercase tracking-wider font-bold text-center">File Page Image 3</label>
+-                        <div className="aspect-video bg-gray-100 rounded-lg overflow-hidden border border-gray-300 flex items-center justify-center cursor-pointer hover:border-gray-400 transition-colors" onClick={() => selectedPage.finalPageImageUrlAngle3 && setPreviewImageUrl(selectedPage.finalPageImageUrlAngle3)}>
+-                          {selectedPage.finalPageImageUrlAngle3 ? (
+-                            <img src={selectedPage.finalPageImageUrlAngle3} alt="Final Page 3" className="w-full h-full object-contain" />
+-                          ) : (
+-                            <span className="text-gray-500 text-sm">No final image 3</span>
+-                          )}
++                        <div className="flex items-center gap-2 mr-2">
++                          <label className="text-app-small text-gray-600 uppercase tracking-wider">Start (s)</label>
++                          <input type="text" readOnly value={selectedPage.pageStartTimestamp?.toFixed(2) || '0.00'} className="w-16 px-2 py-1.5 bg-gray-100 border border-gray-300 rounded text-gray-900 text-app-body h-[42px] text-center" />
+                         </div>
+-                      </div>
+-                    </div>
+-                  </div>
+-                </div>
+-
+-
+-              </div>
++                        <div className="flex items-center gap-2 mr-2">
++                          <label className="text-app-small text-gray-600 uppercase tracking-wider">End (s)</label>
+             ) : (
+               <div className="h-full flex items-center justify-center text-gray-500">
+                 Select a page from the list to view details.

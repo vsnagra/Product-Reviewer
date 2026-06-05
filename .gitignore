@@ -1,0 +1,13 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+uploads/
+outputs/
+youtube_token.json
+server/chrome-profile/
+scratch/

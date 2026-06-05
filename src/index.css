@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@layer utilities {
+  .text-app-heading {
+    font-size: var(--font-size-1);
+  }
+  .text-app-label {
+    font-size: var(--font-size-2);
+  }
+  .text-app-body {
+    font-size: var(--font-size-3);
+  }
+  .text-app-small {
+    font-size: var(--font-size-4);
+  }
+  .font-app {
+    font-family: var(--app-font-family);
+  }
+}
