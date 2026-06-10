@@ -7,7 +7,7 @@ import { AssetManager } from '../../services/AssetManager';
 
 export const ScenesTab: React.FC = () => {
   const { 
-    sceneNodes, setSceneNodes, countdownItems, productResearch, textModel, 
+    sceneNodes, setSceneNodes, countdownItems, categories, productResearch, textModel, 
     setStatus, addErrorLog, updateSceneNode, updateSceneSubNode 
   } = useAppStore();
 
@@ -58,6 +58,10 @@ export const ScenesTab: React.FC = () => {
       alert("Please generate countdown details in the previous tab first.");
       return;
     }
+    if (categories.length === 0) {
+      alert("No categories defined. Please generate or add categories in the Countdown Details tab.");
+      return;
+    }
     
     setIsGenerating(true);
     setStatus(true, 10, 'Generating scenes content...');
@@ -74,7 +78,9 @@ Research Dump:
 ${productResearch.researchDump}
 
 Generate the detailed review content for the product "${item.name}".
-Identify 3 main review categories (e.g., Performance, Design, Value).
+Evaluate this product against the following specific categories:
+${categories.map(c => `- ${c.name}: ${c.description} (How we score: ${c.howWeScore})`).join('\n')}
+
 Return a JSON structure with the following exact schema:`;
 
         const schema = {
@@ -90,13 +96,13 @@ Return a JSON structure with the following exact schema:`;
               items: {
                 type: "OBJECT",
                 properties: {
-                  name: { type: "STRING" },
-                  description: { type: "STRING", description: "20 words category description" },
-                  howWeScore: { type: "STRING", description: "20 words how we score" },
+                  name: { type: "STRING", description: "Must match one of the requested category names exactly." },
                   details: { type: "STRING" },
+                  performanceSpecifications: { type: "STRING", description: "Performance specifications for that category" },
+                  reviewsSummary: { type: "STRING", description: "Summary of reviews for that category" },
                   score: { type: "NUMBER" }
                 },
-                required: ["name", "description", "howWeScore", "details", "score"]
+                required: ["name", "details", "performanceSpecifications", "reviewsSummary", "score"]
               }
             },
             summary: {
@@ -117,13 +123,16 @@ Return a JSON structure with the following exact schema:`;
         const subNodes: SceneSubNode[] = [];
         
         result.categories.forEach((cat: any) => {
+          const globalCat = categories.find(c => c.name.toLowerCase() === cat.name.toLowerCase());
           subNodes.push({
             id: uuidv4(),
             type: 'category',
             name: cat.name,
-            description: cat.description,
-            howWeScore: cat.howWeScore,
+            description: globalCat ? globalCat.description : "No description provided",
+            howWeScore: globalCat ? globalCat.howWeScore : "No scoring criteria provided",
             details: cat.details,
+            performanceSpecifications: cat.performanceSpecifications || "",
+            reviewsSummary: cat.reviewsSummary || "",
             score: cat.score,
             image1: {}, image2: {}, image3: {}, image4: {}, video1: {}, video2: {}
           });
@@ -325,6 +334,28 @@ const SubNodeDetailsEditor: React.FC<{node: SceneNode, subNode: SceneSubNode}> =
         />
       </div>
 
+      {subNode.type === 'category' && (
+        <>
+          <div className="flex flex-col">
+            <label className="text-gray-400 text-sm mb-1">Performance Specifications</label>
+            <textarea
+              className="p-2 rounded bg-white border border-gray-300 text-gray-900 focus:outline-none focus:border-blue-500 h-24"
+              value={subNode.performanceSpecifications || ''}
+              onChange={(e) => handleChange('performanceSpecifications', e.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-col">
+            <label className="text-gray-400 text-sm mb-1">Summary of Reviews</label>
+            <textarea
+              className="p-2 rounded bg-white border border-gray-300 text-gray-900 focus:outline-none focus:border-blue-500 h-24"
+              value={subNode.reviewsSummary || ''}
+              onChange={(e) => handleChange('reviewsSummary', e.target.value)}
+            />
+          </div>
+        </>
+      )}
+
       <h4 className="text-lg font-bold text-gray-900 mt-8 border-b border-gray-300 pb-2">Media Placeholders</h4>
       <div className="grid grid-cols-2 gap-6">
         <MediaSection type="image" label="Image 1" data={subNode.image1} onChange={(val) => handleChange('image1', val)} />
@@ -349,20 +380,89 @@ const MediaSection: React.FC<{
 }> = ({ type, label, data, onChange, referenceImage, subNodeId }) => {
   const { globalSettings, setStatus, addErrorLog, addTraceLog } = useAppStore();
   const [isProcessing, setIsProcessing] = useState(false);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const handleGenerateImage = async () => {
     if (!data.imagePrompt) return;
     setIsProcessing(true);
     setStatus(true, 10, `Generating ${label}...`);
     try {
-      const url = await generateImage(data.imagePrompt);
-      onChange({ ...data, imageUrl: url });
+      const url = await generateImage(data.imagePrompt, data.referenceImageUrl ? [data.referenceImageUrl] : undefined);
+      const newHistory = [...(data.imageHistory || []), url];
+      onChange({ 
+        ...data, 
+        imageUrl: url,
+        imageHistory: newHistory,
+        imageHistoryIndex: newHistory.length - 1
+      });
       setStatus(false, 100, `${label} generated.`);
     } catch (e: any) {
       addErrorLog(`Failed to generate ${label}`, e.message);
       setStatus(false, 0, 'Error');
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  const handlePrevImage = () => {
+    if (data.imageHistory && data.imageHistoryIndex !== undefined && data.imageHistoryIndex > 0) {
+      const newIndex = data.imageHistoryIndex - 1;
+      onChange({ ...data, imageUrl: data.imageHistory[newIndex], imageHistoryIndex: newIndex });
+    }
+  };
+
+  const handleNextImage = () => {
+    if (data.imageHistory && data.imageHistoryIndex !== undefined && data.imageHistoryIndex < data.imageHistory.length - 1) {
+      const newIndex = data.imageHistoryIndex + 1;
+      onChange({ ...data, imageUrl: data.imageHistory[newIndex], imageHistoryIndex: newIndex });
+    }
+  };
+
+  const handleSearchReference = async () => {
+    if (!data.imagePrompt) {
+      alert("Please enter a prompt to search.");
+      return;
+    }
+    setIsProcessing(true);
+    setStatus(true, 10, `Searching reference for ${label}...`);
+    try {
+      const res = await fetch('http://localhost:3012/api/search-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: data.imagePrompt })
+      });
+      const json = await res.json();
+      if (json.url) {
+        onChange({ ...data, referenceImageUrl: json.url });
+        setPreviewImage(json.url);
+        setStatus(false, 100, 'Found reference image.');
+      } else {
+        setStatus(false, 100, 'No reference image found.');
+      }
+    } catch (e: any) {
+      addErrorLog('Search failed', e.message);
+      setStatus(false, 0, 'Search Error');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleUploadReference = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      const formData = new FormData();
+      formData.append('media', file);
+      try {
+        const res = await fetch('http://localhost:3012/api/upload', {
+          method: 'POST',
+          body: formData
+        });
+        const json = await res.json();
+        onChange({ ...data, referenceImageUrl: json.url });
+        setPreviewImage(json.url);
+      } catch (e: any) {
+        addErrorLog('Upload reference failed', e.message);
+      }
     }
   };
 
@@ -436,7 +536,13 @@ const MediaSection: React.FC<{
         });
         const json = await res.json();
         if (type === 'image') {
-          onChange({ ...data, imageUrl: json.url });
+          const newHistory = [...(data.imageHistory || []), json.url];
+          onChange({ 
+            ...data, 
+            imageUrl: json.url,
+            imageHistory: newHistory,
+            imageHistoryIndex: newHistory.length - 1
+          });
         } else {
           onChange({ ...data, videoUrl: json.url });
         }
@@ -447,7 +553,7 @@ const MediaSection: React.FC<{
   };
 
   return (
-    <div className="bg-white p-4 rounded border border-gray-300 flex flex-col space-y-3">
+    <div className="bg-white p-4 rounded border border-gray-300 flex flex-col space-y-3 relative">
       <div className="flex justify-between items-center">
         <span className="text-gray-900 font-bold">{label}</span>
         <div className="flex space-x-2">
@@ -475,12 +581,30 @@ const MediaSection: React.FC<{
       </div>
 
       {type === 'image' && (
-        <textarea
-          className="p-2 rounded bg-gray-50 border border-gray-300 text-gray-900 text-sm h-20"
-          placeholder="Image Prompt..."
-          value={data.imagePrompt || ''}
-          onChange={(e) => onChange({ ...data, imagePrompt: e.target.value })}
-        />
+        <div className="flex flex-col space-y-2">
+          <textarea
+            className="p-2 rounded bg-gray-50 border border-gray-300 text-gray-900 text-sm h-20"
+            placeholder="Image Prompt..."
+            value={data.imagePrompt || ''}
+            onChange={(e) => onChange({ ...data, imagePrompt: e.target.value })}
+          />
+          <div className="flex items-center space-x-2 text-xs">
+            <span className="text-gray-500 font-semibold">Ref Image:</span>
+            {data.referenceImageUrl ? (
+              <button onClick={() => setPreviewImage(data.referenceImageUrl!)} className="text-blue-600 hover:underline">Preview</button>
+            ) : (
+              <span className="text-gray-400">None</span>
+            )}
+            <button onClick={handleSearchReference} disabled={isProcessing} className="bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded text-gray-800">Search Internet</button>
+            <label className="bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded text-gray-800 cursor-pointer">
+              Upload
+              <input type="file" className="hidden" accept="image/*" onChange={handleUploadReference} />
+            </label>
+            {data.referenceImageUrl && (
+               <button onClick={() => onChange({ ...data, referenceImageUrl: undefined })} className="text-red-500 hover:underline">Clear</button>
+            )}
+          </div>
+        </div>
       )}
       
       {type === 'video' && (
@@ -511,15 +635,40 @@ const MediaSection: React.FC<{
         </div>
       )}
 
-      <div className="flex-grow flex items-center justify-center bg-gray-100 rounded border border-gray-300 overflow-hidden min-h-[150px]">
-        {type === 'image' && data.imageUrl ? (
-          <img src={data.imageUrl} className="max-w-full max-h-full object-contain" />
+      <div className="flex-grow flex items-center justify-center bg-gray-100 rounded border border-gray-300 overflow-hidden relative h-32">
+        {type === 'image' && (data.imageUrl || data.referenceImageUrl) ? (
+          <>
+            <img 
+              src={data.imageUrl || data.referenceImageUrl} 
+              className={`max-w-full max-h-full object-contain cursor-pointer ${!data.imageUrl ? 'opacity-60' : ''}`} 
+              onClick={() => setPreviewImage(data.imageUrl || data.referenceImageUrl!)} 
+            />
+            {!data.imageUrl && data.referenceImageUrl && (
+              <div className="absolute top-2 left-2 bg-black/60 text-white text-xs px-2 py-1 rounded">
+                Reference Image
+              </div>
+            )}
+            {data.imageHistory && data.imageHistory.length > 1 && (
+              <div className="absolute bottom-2 right-2 flex space-x-1 bg-black/50 rounded p-1">
+                 <button onClick={handlePrevImage} disabled={data.imageHistoryIndex === 0} className="text-white px-2 disabled:opacity-30">&lt;</button>
+                 <span className="text-white text-xs px-1">{(data.imageHistoryIndex || 0) + 1} / {data.imageHistory.length}</span>
+                 <button onClick={handleNextImage} disabled={data.imageHistoryIndex === data.imageHistory.length - 1} className="text-white px-2 disabled:opacity-30">&gt;</button>
+              </div>
+            )}
+          </>
         ) : type === 'video' && data.videoUrl ? (
           <video src={data.videoUrl} className="max-w-full max-h-full" controls loop muted />
         ) : (
           <span className="text-gray-400">No Media</span>
         )}
       </div>
+
+      {previewImage && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" onClick={() => setPreviewImage(null)}>
+          <img src={previewImage} className="max-w-full max-h-full object-contain" onClick={(e) => e.stopPropagation()} />
+          <button className="absolute top-4 right-4 text-white text-2xl font-bold p-2 bg-black/50 rounded-full w-10 h-10 flex items-center justify-center hover:bg-black/80" onClick={() => setPreviewImage(null)}>&times;</button>
+        </div>
+      )}
     </div>
   );
 };

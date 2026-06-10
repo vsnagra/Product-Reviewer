@@ -192,6 +192,37 @@ app.get('/api/sound-effects/scan', (req, res) => {
   }
 });
 
+app.post('/api/search-image', async (req, res) => {
+  try {
+    const { query } = req.body;
+    if (!query) return res.status(400).json({ error: "Missing query" });
+    
+    // Extract meaningful keywords by removing common prompt prefixes
+    let term = query.replace(/^(create an image of|show me|a picture of|generate an image of|an image of)\s+/i, '').trim();
+    term = term.split(' ').slice(0, 3).join(' ');
+    
+    const apiUrl = `https://en.wikipedia.org/w/api.php?action=query&prop=pageimages&format=json&piprop=original&generator=search&gsrsearch=${encodeURIComponent(term)}&gsrlimit=3`;
+    const searchRes = await fetch(apiUrl);
+    const data = await searchRes.json();
+    
+    const pages = data.query?.pages;
+    if (pages) {
+      for (const pageId of Object.keys(pages)) {
+        const imageUrl = pages[pageId]?.original?.source;
+        if (imageUrl) {
+           return res.json({ url: imageUrl });
+        }
+      }
+    }
+    
+    // Fallback if no images found on Wikipedia
+    const fallbackUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(term)}`;
+    res.json({ url: fallbackUrl });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/transcode/status/:jobId', (req, res) => {
   const job = jobs[req.params.jobId];
   if (!job) {
@@ -202,6 +233,25 @@ app.get('/api/transcode/status/:jobId', (req, res) => {
 
 // Serve the generated outputs
 app.use('/outputs', express.static(path.join(process.cwd(), 'outputs')));
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
+app.post('/api/upload', (req, res, next) => {
+  uploadMiddleware(req, res, (err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    next();
+  });
+}, (req, res) => {
+  try {
+    const files = (req.files || []) as Express.Multer.File[];
+    if (files.length === 0) {
+      return res.status(400).json({ error: "No files uploaded" });
+    }
+    const url = `http://localhost:3012/uploads/${path.basename(files[0].path)}`;
+    res.json({ url });
+  } catch(e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 async function runJob(jobId: string, settings: any, media: any, uploadedPageMedia: Record<string, string>) {
   try {

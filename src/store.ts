@@ -7,6 +7,13 @@ export interface ProductResearch {
   researchDump: string;
 }
 
+export interface Category {
+  id: string;
+  name: string;
+  description: string;
+  howWeScore: string;
+}
+
 export interface CountdownItem {
   id: string;
   name: string;
@@ -15,6 +22,9 @@ export interface CountdownItem {
 
 export interface MediaData {
   imageUrl?: string;
+  imageHistory?: string[];
+  imageHistoryIndex?: number;
+  referenceImageUrl?: string;
   imagePrompt?: string;
   videoUrl?: string;
   videoPrompt?: string;
@@ -29,6 +39,8 @@ export interface SceneSubNode {
   description: string;
   howWeScore: string;
   details: string;
+  performanceSpecifications?: string;
+  reviewsSummary?: string;
   score: number;
   image1: MediaData;
   image2: MediaData;
@@ -62,6 +74,14 @@ export interface ErrorLog {
   details?: string;
 }
 
+export interface LLMLog {
+  id: string;
+  timestamp: string;
+  type: 'text' | 'image';
+  request: any;
+  response: any;
+}
+
 export interface AppState {
   imageModel: string;
   setImageModel: (model: string) => void;
@@ -79,6 +99,10 @@ export interface AppState {
   addErrorLog: (message: string, details?: string) => void;
   clearErrorLogs: () => void;
 
+  llmLogs: LLMLog[];
+  addLlmLog: (type: 'text' | 'image', request: any, response: any) => void;
+  clearLlmLogs: () => void;
+
   traceLogs: string[];
   addTraceLog: (log: string) => void;
   clearTraceLogs: () => void;
@@ -95,8 +119,14 @@ export interface AppState {
   productResearch: ProductResearch;
   setProductResearch: (data: Partial<ProductResearch>) => void;
 
+  guidingPrompt: string;
+  setGuidingPrompt: (prompt: string) => void;
+
   countdownItems: CountdownItem[];
   setCountdownItems: (items: CountdownItem[]) => void;
+
+  categories: Category[];
+  setCategories: (categories: Category[]) => void;
 
   sceneNodes: SceneNode[];
   setSceneNodes: (nodes: SceneNode[]) => void;
@@ -154,6 +184,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   })),
   clearErrorLogs: () => set({ errorLogs: [] }),
 
+  llmLogs: [],
+  addLlmLog: (type, request, response) => set((state) => ({
+    llmLogs: [
+      { id: uuidv4(), timestamp: new Date().toISOString(), type, request, response },
+      ...state.llmLogs
+    ]
+  })),
+  clearLlmLogs: () => set({ llmLogs: [] }),
+
   traceLogs: [],
   addTraceLog: (log) => set((state) => ({
     traceLogs: [`[${new Date().toISOString()}] ${log}`, ...state.traceLogs]
@@ -178,8 +217,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     productResearch: { ...state.productResearch, ...data }
   })),
 
+  guidingPrompt: '',
+  setGuidingPrompt: (prompt) => set({ guidingPrompt: prompt }),
+
   countdownItems: [],
   setCountdownItems: (items) => set({ countdownItems: items }),
+
+  categories: [],
+  setCategories: (categories) => set({ categories }),
 
   sceneNodes: [],
   setSceneNodes: (nodes) => set({ sceneNodes: nodes }),
@@ -230,7 +275,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       textModel: state.textModel,
       globalSettings: state.globalSettings,
       productResearch: state.productResearch,
+      guidingPrompt: state.guidingPrompt,
       countdownItems: state.countdownItems,
+      categories: state.categories,
       sceneNodes: state.sceneNodes
     };
 
