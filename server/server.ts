@@ -197,29 +197,76 @@ app.post('/api/search-image', async (req, res) => {
     const { query } = req.body;
     if (!query) return res.status(400).json({ error: "Missing query" });
     
-    // Extract meaningful keywords by removing common prompt prefixes
+    // Extract keywords by removing prefixes
     let term = query.replace(/^(create an image of|show me|a picture of|generate an image of|an image of)\s+/i, '').trim();
-    term = term.split(' ').slice(0, 3).join(' ');
+    term = term.split(' ').slice(0, 4).join(' '); // Keep up to 4 words for higher quality
     
-    const apiUrl = `https://en.wikipedia.org/w/api.php?action=query&prop=pageimages&format=json&piprop=original&generator=search&gsrsearch=${encodeURIComponent(term)}&gsrlimit=3`;
-    const searchRes = await fetch(apiUrl);
-    const data = await searchRes.json();
-    
-    const pages = data.query?.pages;
-    if (pages) {
-      for (const pageId of Object.keys(pages)) {
-        const imageUrl = pages[pageId]?.original?.source;
-        if (imageUrl) {
-           return res.json({ url: imageUrl });
-        }
+    const searchUrl = `https://duckduckgo.com/?q=${encodeURIComponent(term)}`;
+    const searchResponse = await fetch(searchUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       }
+    });
+    const html = await searchResponse.text();
+    
+    const vqdRegex = /vqd=([0-9a-zA-Z-]+)/;
+    const match = html.match(vqdRegex);
+    if (!match) {
+      throw new Error("Could not extract VQD token from DuckDuckGo");
+    }
+    const vqd = match[1];
+    
+    const apiUrl = `https://duckduckgo.com/i.js?q=${encodeURIComponent(term)}&vqd=${vqd}&o=json`;
+    const apiResponse = await fetch(apiUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://duckduckgo.com/'
+      }
+    });
+    
+    if (!apiResponse.ok) {
+      throw new Error(`DuckDuckGo API responded with status ${apiResponse.status}`);
     }
     
-    // Fallback if no images found on Wikipedia
-    const fallbackUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(term)}`;
-    res.json({ url: fallbackUrl });
+    const data = await apiResponse.json();
+    if (!data.results || data.results.length === 0) {
+      throw new Error("No images found on DuckDuckGo");
+    }
+    
+    const urls = data.results.map((r: any) => r.image).filter(Boolean);
+    if (urls.length === 0) {
+      throw new Error("No valid image URLs returned");
+    }
+    
+    res.json({ url: urls[0], urls: urls });
   } catch (error: any) {
+    console.error("DuckDuckGo image search failed:", error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/proxy', async (req, res) => {
+  try {
+    const { url } = req.query;
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: "Missing url parameter" });
+    }
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      }
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch remote URL: ${response.status}`);
+    }
+    const contentType = response.headers.get('content-type') || 'application/octet-stream';
+    res.setHeader('Content-Type', contentType);
+    
+    const arrayBuffer = await response.arrayBuffer();
+    res.send(Buffer.from(arrayBuffer));
+  } catch (error: any) {
+    console.error("Proxy failed:", error);
+    res.status(500).send(error.message);
   }
 });
 

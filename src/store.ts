@@ -30,6 +30,7 @@ export interface MediaData {
   videoPrompt?: string;
   pageVideoSpeedMultiplier?: number;
   pageVideoCutoffSecs?: number;
+  searchQuery?: string;
 }
 
 export interface SceneSubNode {
@@ -59,6 +60,7 @@ export interface SceneNode {
   launchDate: string;
   generalDescription: string;
   subNodes: SceneSubNode[];
+  mediaPlaceholders?: MediaData[];
 }
 
 export interface GlobalSettings {
@@ -142,7 +144,7 @@ const defaultMediaData = (): MediaData => ({});
 
 const defaultGlobalSettings: GlobalSettings = {
   modelId: 'inworld-tts-1.5-max',
-  veoChromeProfilePath: "C:\\Users\\vnagra\\AppData\\Local\\Google\\Chrome\\User Data\\Profile 5",
+  veoChromeProfilePath: "C:\\Users\\vsnag\\AppData\\Local\\Google\\Chrome\\User Data\\Profile 5",
   veoChromeExecutablePath: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
 };
 
@@ -245,20 +247,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { AssetManager } = await import('./services/AssetManager');
     const resolveAndSaveMediaDeep = async (obj: any): Promise<any> => {
       if (!obj) return obj;
-      if (typeof obj === 'string' && (obj.startsWith('blob:') || obj.startsWith('http'))) {
-        if (obj.startsWith('http://localhost:3005/downloads/')) {
-          return `asset://${obj.split('/').pop()}`;
+      if (typeof obj === 'string') {
+        const filename = AssetManager.getFilenameFromUrl(obj);
+        if (filename) return `asset://${filename}`;
+        
+        const isBlobOrData = obj.startsWith('data:') || obj.startsWith('blob:');
+        const isHttpOrPath = obj.startsWith('http://') || obj.startsWith('https://') || obj.startsWith('/');
+        
+        if (isBlobOrData || isHttpOrPath) {
+          try {
+            const savedUrl = await AssetManager.saveMedia(obj);
+            const newFilename = AssetManager.getFilenameFromUrl(savedUrl);
+            if (newFilename) return `asset://${newFilename}`;
+          } catch (e) {
+            console.warn("Failed to save media during export", e);
+          }
         }
-        try {
-          const res = await fetch(obj);
-          const blob = await res.blob();
-          let ext = blob.type.split('/')[1] || 'bin';
-          if (ext === 'jpeg') ext = 'jpg';
-          const newFilename = await AssetManager.saveFile(blob, `media.${ext}`);
-          if (newFilename) return `asset://${newFilename}`;
-        } catch (e) {
-          console.warn("Failed to save media during export", e);
-        }
+        return obj;
       }
       if (Array.isArray(obj)) return Promise.all(obj.map(item => resolveAndSaveMediaDeep(item)));
       if (typeof obj === 'object') {
@@ -270,6 +275,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     };
 
     const state = get();
+    // Deep clone and strip imageHistory & imageHistoryIndex from mediaPlaceholders of each Item Node
+    const cleanNodes = state.sceneNodes.map(node => ({
+      ...node,
+      mediaPlaceholders: node.mediaPlaceholders?.map(placeholder => {
+        const cleanPlaceholder = { ...placeholder };
+        delete cleanPlaceholder.imageHistory;
+        delete cleanPlaceholder.imageHistoryIndex;
+        return cleanPlaceholder;
+      })
+    }));
+
     const rest = {
       imageModel: state.imageModel,
       textModel: state.textModel,
@@ -278,7 +294,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       guidingPrompt: state.guidingPrompt,
       countdownItems: state.countdownItems,
       categories: state.categories,
-      sceneNodes: state.sceneNodes
+      sceneNodes: cleanNodes
     };
 
     const processedData = await resolveAndSaveMediaDeep(rest);

@@ -1,8 +1,23 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAppStore } from '../../store';
+import { AssetManager } from '../../services/AssetManager';
 
 export const GlobalSettingsTab: React.FC = () => {
   const { globalSettings, setGlobalSettings, llmLogs, clearLlmLogs } = useAppStore();
+  const [assetFolderName, setAssetFolderName] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    AssetManager.init().then(() => {
+      setAssetFolderName(AssetManager.folderName);
+    });
+  }, []);
+
+  const handleSelectAssetFolder = async () => {
+    const success = await AssetManager.requestAssetFolder();
+    if (success) {
+      setAssetFolderName(AssetManager.folderName);
+    }
+  };
 
   const textLogs = llmLogs.filter(log => log.type === 'text');
   const imageLogs = llmLogs.filter(log => log.type === 'image');
@@ -37,11 +52,30 @@ export const GlobalSettingsTab: React.FC = () => {
   );
 
   return (
-    <div className="h-full flex flex-col p-4 space-y-6 overflow-y-auto">
-      <h2 className="text-2xl font-semibold text-gray-900 border-b border-gray-300 pb-2">Global Settings</h2>
+    <div className="h-full flex flex-col p-4 space-y-6 overflow-y-auto bg-gray-50">
+      <h2 className="text-2xl font-bold text-gray-900 border-b border-gray-300 pb-2">Global Settings</h2>
 
-      <div className="space-y-4 max-w-2xl shrink-0">
-        <h3 className="text-lg font-medium text-gray-900">Veo Automation Config</h3>
+      <div className="space-y-4 max-w-2xl bg-white border border-gray-200 rounded-lg p-6 flex flex-col gap-4 shadow-sm shrink-0">
+        <h3 className="text-lg font-bold text-gray-900 border-b pb-2">Asset Folder Settings</h3>
+        <div className="flex flex-col gap-2">
+          <label className="text-sm font-semibold text-gray-700">Asset Folder</label>
+          <div className="flex items-center gap-4">
+            <span className="flex-1 px-3 py-2 bg-gray-100 border border-gray-300 rounded text-gray-900 truncate">
+              {assetFolderName ? `📁 ${assetFolderName}` : 'No folder selected'}
+            </span>
+            <button
+              onClick={handleSelectAssetFolder}
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors whitespace-nowrap font-bold"
+            >
+              Select Folder
+            </button>
+          </div>
+          <p className="text-xs text-gray-500">All media generated and loaded will be saved here.</p>
+        </div>
+      </div>
+
+      <div className="space-y-4 max-w-2xl bg-white border border-gray-200 rounded-lg p-6 shadow-sm shrink-0">
+        <h3 className="text-lg font-bold text-gray-900 border-b pb-2">Veo Automation Config</h3>
         
         <div className="flex flex-col">
           <label className="text-gray-600 text-sm mb-1">Chrome Profile Path</label>

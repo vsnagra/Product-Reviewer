@@ -23,5 +23,10 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": [
+    "src/lib/imageUtils.ts",
+    "src/services/agenticFlow.ts",
+    "src/services/inworld.ts"
+  ]
 }

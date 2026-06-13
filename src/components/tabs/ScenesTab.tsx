@@ -157,7 +157,8 @@ Return a JSON structure with the following exact schema:`;
           manufacturer: result.manufacturer,
           launchDate: result.launchDate,
           generalDescription: result.generalDescription,
-          subNodes: subNodes
+          subNodes: subNodes,
+          mediaPlaceholders: Array.from({ length: 6 }, () => ({}))
         });
       }
       
@@ -236,10 +237,72 @@ Return a JSON structure with the following exact schema:`;
 };
 
 const NodeDetailsEditor: React.FC<{node: SceneNode}> = ({ node }) => {
-  const { updateSceneNode } = useAppStore();
+  const { updateSceneNode, setStatus, addErrorLog } = useAppStore();
+  const [searchQuery, setSearchQuery] = React.useState(node.itemName);
+  const [isSearching, setIsSearching] = React.useState(false);
+
+  // Sync search query if item name changes
+  React.useEffect(() => {
+    setSearchQuery(node.itemName);
+  }, [node.id, node.itemName]);
 
   const handleChange = (field: keyof SceneNode, value: string) => {
     updateSceneNode(node.id, { [field]: value });
+  };
+
+  const handleNodeSearch = async () => {
+    if (!searchQuery.trim()) {
+      alert("Please enter a query.");
+      return;
+    }
+    setIsSearching(true);
+    setStatus(true, 10, 'Searching images on DuckDuckGo...');
+    try {
+      const res = await fetch('http://localhost:3012/api/search-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: searchQuery })
+      });
+      
+      if (!res.ok) {
+        const errJson = await res.json();
+        throw new Error(errJson.error || `Server responded with ${res.status}`);
+      }
+      
+      const json = await res.json();
+      if (json.urls && json.urls.length > 0) {
+        const urls = json.urls;
+        
+        // Select starting offsets: 1st (0), 4th (3), 7th (6), 10th (9), 13th (12), 15th (14)
+        const indices = [0, 3, 6, 9, 12, 14];
+        
+        const newPlaceholders = Array.from({ length: 6 }).map((_, placeholderIdx) => {
+          const targetIndex = indices[placeholderIdx];
+          const selectedIndex = targetIndex < urls.length ? targetIndex : (urls.length > 0 ? urls.length - 1 : 0);
+          const imageUrl = urls.length > 0 ? urls[selectedIndex] : undefined;
+          
+          return {
+            searchQuery: searchQuery,
+            imageUrl: imageUrl,
+            imageHistory: urls,
+            imageHistoryIndex: selectedIndex
+          };
+        });
+        
+        updateSceneNode(node.id, { mediaPlaceholders: newPlaceholders });
+        setStatus(false, 100, 'Images loaded successfully across all placeholders.');
+      } else {
+        alert("No images found on DuckDuckGo.");
+        setStatus(false, 100, "No images found.");
+      }
+    } catch (e: any) {
+      console.error(e);
+      addErrorLog(`DuckDuckGo node search failed`, e.message);
+      setStatus(false, 0, 'Search Error');
+      alert(`Error searching: ${e.message}`);
+    } finally {
+      setIsSearching(false);
+    }
   };
 
   return (
@@ -269,6 +332,51 @@ const NodeDetailsEditor: React.FC<{node: SceneNode}> = ({ node }) => {
           value={node.generalDescription}
           onChange={(e) => handleChange('generalDescription', e.target.value)}
         />
+      </div>
+
+      <div className="flex flex-col border bg-blue-50 p-4 rounded-lg border-blue-200 mt-6 gap-2">
+        <label className="text-gray-900 font-bold text-sm">Search Node Images (Applies to all 6 placeholders)</label>
+        <div className="flex space-x-2">
+          <input
+            type="text"
+            className="p-2 rounded bg-white border border-gray-300 text-gray-900 text-sm flex-grow focus:outline-none focus:border-blue-500 font-medium"
+            placeholder="Enter search query..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+          <button
+            onClick={handleNodeSearch}
+            disabled={isSearching}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-bold flex items-center justify-center disabled:opacity-50 min-w-[120px] transition-colors"
+          >
+            {isSearching ? 'Searching...' : 'Search DDG'}
+          </button>
+        </div>
+        <p className="text-xs text-gray-500">
+          Searches DuckDuckGo and distributes results: 1st image in Placeholder 1, 4th in Placeholder 2, 7th in Placeholder 3, 10th in Placeholder 4, 13th in Placeholder 5, and 15th in Placeholder 6.
+        </p>
+      </div>
+
+      <h4 className="text-lg font-bold text-gray-900 mt-8 border-b border-gray-300 pb-2">Media Placeholders</h4>
+      <div className="grid grid-cols-2 gap-6">
+        {Array.from({ length: 6 }).map((_, index) => {
+          const placeholders = node.mediaPlaceholders || Array.from({ length: 6 }, () => ({}));
+          const data = placeholders[index] || {};
+          
+          return (
+            <ItemMediaPlaceholder
+              key={index}
+              index={index}
+              node={node}
+              data={data}
+              onChange={(updatedData) => {
+                const newPlaceholders = [...placeholders];
+                newPlaceholders[index] = updatedData;
+                updateSceneNode(node.id, { mediaPlaceholders: newPlaceholders });
+              }}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -660,6 +768,231 @@ const MediaSection: React.FC<{
           <video src={data.videoUrl} className="max-w-full max-h-full" controls loop muted />
         ) : (
           <span className="text-gray-400">No Media</span>
+        )}
+      </div>
+
+      {previewImage && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" onClick={() => setPreviewImage(null)}>
+          <img src={previewImage} className="max-w-full max-h-full object-contain" onClick={(e) => e.stopPropagation()} />
+          <button className="absolute top-4 right-4 text-white text-2xl font-bold p-2 bg-black/50 rounded-full w-10 h-10 flex items-center justify-center hover:bg-black/80" onClick={() => setPreviewImage(null)}>&times;</button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ItemMediaPlaceholder: React.FC<{
+  index: number,
+  node: SceneNode,
+  data: MediaData,
+  onChange: (val: MediaData) => void
+}> = ({ index, node, data, onChange }) => {
+  const { setStatus, addErrorLog } = useAppStore();
+  const [isSearching, setIsSearching] = useState(false);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+
+  // Default query to node.itemName if not set
+  const query = data.searchQuery !== undefined ? data.searchQuery : node.itemName;
+
+  const handleSearch = async () => {
+    if (!query.trim()) {
+      alert("Please enter a search query.");
+      return;
+    }
+    setIsSearching(true);
+    setStatus(true, 10, `Searching images for Placeholder ${index + 1}...`);
+    try {
+      const res = await fetch('http://localhost:3012/api/search-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query })
+      });
+      
+      if (!res.ok) {
+        const errJson = await res.json();
+        throw new Error(errJson.error || `Server responded with ${res.status}`);
+      }
+      
+      const json = await res.json();
+      if (json.urls && json.urls.length > 0) {
+        onChange({
+          ...data,
+          searchQuery: query,
+          imageUrl: json.urls[0],
+          imageHistory: json.urls,
+          imageHistoryIndex: 0
+        });
+        setStatus(false, 100, `Found images for Placeholder ${index + 1}.`);
+      } else {
+        alert("No images found on DuckDuckGo.");
+        setStatus(false, 100, "No images found.");
+      }
+    } catch (e: any) {
+      console.error(e);
+      addErrorLog(`Search failed for Placeholder ${index + 1}`, e.message);
+      setStatus(false, 0, 'Search Error');
+      alert(`Error searching: ${e.message}`);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const handlePrevImage = () => {
+    if (data.imageHistory && data.imageHistoryIndex !== undefined && data.imageHistoryIndex > 0) {
+      const newIndex = data.imageHistoryIndex - 1;
+      onChange({ ...data, imageUrl: data.imageHistory[newIndex], imageHistoryIndex: newIndex });
+    }
+  };
+
+  const handleNextImage = () => {
+    if (data.imageHistory && data.imageHistoryIndex !== undefined && data.imageHistory.length > 0 && data.imageHistoryIndex < data.imageHistory.length - 1) {
+      const newIndex = data.imageHistoryIndex + 1;
+      onChange({ ...data, imageUrl: data.imageHistory[newIndex], imageHistoryIndex: newIndex });
+    }
+  };
+
+  const handleDelete = () => {
+    if (!data.imageUrl) return;
+    
+    // Remove the current image from history if it exists there
+    const history = data.imageHistory || [];
+    const indexToDelete = data.imageHistoryIndex !== undefined ? data.imageHistoryIndex : history.indexOf(data.imageUrl);
+    
+    let newHistory = [...history];
+    if (indexToDelete !== -1) {
+      newHistory.splice(indexToDelete, 1);
+    }
+    
+    if (newHistory.length === 0) {
+      // If the only image is deleted
+      onChange({
+        ...data,
+        imageUrl: undefined,
+        imageHistory: [],
+        imageHistoryIndex: undefined
+      });
+    } else {
+      // Load previous or next image
+      const newIndex = indexToDelete < newHistory.length ? indexToDelete : newHistory.length - 1;
+      onChange({
+        ...data,
+        imageUrl: newHistory[newIndex],
+        imageHistory: newHistory,
+        imageHistoryIndex: newIndex
+      });
+    }
+  };
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      const formData = new FormData();
+      formData.append('media', file);
+      
+      try {
+        setStatus(true, 30, "Uploading image...");
+        const res = await fetch('http://localhost:3012/api/upload', {
+          method: 'POST',
+          body: formData
+        });
+        
+        if (!res.ok) {
+          throw new Error(`Server responded with ${res.status}`);
+        }
+        
+        const json = await res.json();
+        const history = data.imageHistory || [];
+        const newHistory = [...history, json.url];
+        
+        onChange({
+          ...data,
+          searchQuery: query,
+          imageUrl: json.url,
+          imageHistory: newHistory,
+          imageHistoryIndex: newHistory.length - 1
+        });
+        setStatus(false, 100, "Upload successful.");
+      } catch (e: any) {
+        console.error(e);
+        addErrorLog('Upload failed', e.message);
+        setStatus(false, 0, 'Upload Error');
+        alert(`Upload failed: ${e.message}`);
+      }
+    }
+  };
+
+  return (
+    <div className="bg-white p-4 rounded border border-gray-300 flex flex-col space-y-3 relative">
+      <div className="flex justify-between items-center">
+        <span className="text-gray-900 font-bold">Placeholder {index + 1}</span>
+        <div className="flex space-x-2">
+          <label className="p-1.5 bg-gray-200 hover:bg-gray-300 rounded text-gray-800 cursor-pointer flex items-center justify-center" title="Upload">
+            <Upload size={16} />
+            <input type="file" className="hidden" accept="image/*" onChange={handleUpload} />
+          </label>
+          <button 
+            onClick={handleDelete} 
+            disabled={!data.imageUrl}
+            className="p-1.5 bg-red-600 hover:bg-red-700 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center" 
+            title="Delete"
+          >
+            <Trash2 size={16} />
+          </button>
+        </div>
+      </div>
+
+      <div className="flex flex-col space-y-2">
+        <label className="text-gray-400 text-xs mb-0.5">Search Query</label>
+        <div className="flex space-x-2">
+          <input
+            type="text"
+            className="p-2 rounded bg-gray-50 border border-gray-300 text-gray-900 text-sm flex-grow focus:outline-none focus:border-blue-500"
+            placeholder="Search query..."
+            value={query}
+            onChange={(e) => onChange({ ...data, searchQuery: e.target.value })}
+          />
+          <button
+            onClick={handleSearch}
+            disabled={isSearching}
+            className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-semibold flex items-center justify-center disabled:opacity-50"
+          >
+            {isSearching ? 'Searching...' : 'Search'}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-grow flex items-center justify-center bg-gray-100 rounded border border-gray-300 overflow-hidden relative h-32">
+        {data.imageUrl ? (
+          <>
+            <img 
+              src={data.imageUrl} 
+              className="max-w-full max-h-full object-contain cursor-pointer" 
+              onClick={() => setPreviewImage(data.imageUrl!)} 
+            />
+            {data.imageHistory && data.imageHistory.length > 1 && (
+              <div className="absolute bottom-2 right-2 flex space-x-1 bg-black/60 rounded p-1 items-center">
+                 <button 
+                   onClick={handlePrevImage} 
+                   disabled={data.imageHistoryIndex === 0} 
+                   className="text-white px-2 disabled:opacity-30 hover:text-blue-300 font-bold"
+                 >
+                   &lt;
+                 </button>
+                 <span className="text-white text-xs px-1 select-none font-semibold">
+                   {(data.imageHistoryIndex || 0) + 1} / {data.imageHistory.length}
+                 </span>
+                 <button 
+                   onClick={handleNextImage} 
+                   disabled={data.imageHistoryIndex === data.imageHistory.length - 1} 
+                   className="text-white px-2 disabled:opacity-30 hover:text-blue-300 font-bold"
+                 >
+                   &gt;
+                 </button>
+              </div>
+            )}
+          </>
+        ) : (
+          <span className="text-gray-400">No Image</span>
         )}
       </div>
 

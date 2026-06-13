@@ -50,7 +50,13 @@ class AssetManagerService {
   }
 
   private async getArrayBufferFromDataUri(dataUri: string): Promise<{ buffer: ArrayBuffer, mime: string }> {
-      const res = await fetch(dataUri);
+      let fetchUrl = dataUri;
+      if (dataUri.startsWith('http://') || dataUri.startsWith('https://')) {
+          if (!dataUri.startsWith('http://localhost:3012/')) {
+              fetchUrl = `http://localhost:3012/api/proxy?url=${encodeURIComponent(dataUri)}`;
+          }
+      }
+      const res = await fetch(fetchUrl);
       const blob = await res.blob();
       const buffer = await blob.arrayBuffer();
       return { buffer, mime: blob.type };
@@ -79,13 +85,18 @@ class AssetManagerService {
     let ext = forceExtension || 'bin';
 
     if (typeof dataUriOrFile === 'string') {
-        if (!dataUriOrFile.startsWith('data:') && !dataUriOrFile.startsWith('blob:')) {
-            return dataUriOrFile; // Already a URL we don't manage this way, or a plain http url
+        const isBlobOrData = dataUriOrFile.startsWith('data:') || dataUriOrFile.startsWith('blob:');
+        const isHttpOrPath = dataUriOrFile.startsWith('http://') || dataUriOrFile.startsWith('https://') || dataUriOrFile.startsWith('/');
+
+        if (!isBlobOrData && !isHttpOrPath) {
+            return dataUriOrFile; // Not a URL we manage
         }
         
         // Skip saving blob urls that are already known in the map
         if (this.urlToFilenameMap[dataUriOrFile]) {
-            return dataUriOrFile;
+            return this.urlToFilenameMap[dataUriOrFile].startsWith('asset://')
+                ? this.urlToFilenameMap[dataUriOrFile]
+                : dataUriOrFile;
         }
 
         try {
@@ -98,9 +109,14 @@ class AssetManagerService {
                 else if (mime.includes('mp3') || mime.includes('mpeg')) ext = 'mp3';
                 else if (mime.includes('wav')) ext = 'wav';
                 else if (mime.includes('mp4')) ext = 'mp4';
+                else {
+                    // Try to guess from url string if mime type is generic
+                    const match = dataUriOrFile.split('?')[0].match(/\.(png|jpg|jpeg|wav|mp3|mp4|webm|gif)$/i);
+                    if (match) ext = match[1].toLowerCase();
+                }
             }
         } catch (e) {
-            console.error("Failed to parse data URI", e);
+            console.error("Failed to parse or fetch media URI", e);
             return dataUriOrFile;
         }
     } else {
